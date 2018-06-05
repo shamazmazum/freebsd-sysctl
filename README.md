@@ -10,7 +10,13 @@ Examples
 --------
 Here is the documentation in a form of examples.
 ~~~~~~~~~~~~~~~~{.lisp}
+;; Read a sysctl value
 (freebsd-sysctl:sysctl-by-name "kern.hz")
+;;  >> 1000
+;;  >> NIL
+
+;; You can also access values via MIBs (Management Information Base)
+(freebsd-sysctl:sysctl (freebsd-sysctl:sysctl-name=>mib "kern.hz"))
 ;;  >> 1000
 ;;  >> NIL
 
