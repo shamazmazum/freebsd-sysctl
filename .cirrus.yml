@@ -1,0 +1,11 @@
+freebsd_instance:
+  image_family: freebsd-13-0-snap
+
+env:
+  LISP: sbcl-bin
+
+task:
+  install_script:
+    - pkg install -y git roswell gmake
+  script:
+    - ros -l $CIRRUS_WORKING_DIR/tests/cirrus.lisp
