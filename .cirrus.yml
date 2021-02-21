@@ -1,11 +1,15 @@
 freebsd_instance:
   image_family: freebsd-13-0-snap
 
-env:
-  LISP: sbcl-bin
-
 task:
+  env:
+    matrix:
+      - LISP: sbcl
+      - LISP: ccl
+      - LISP: clisp
+  preinstall_script:
+    - pkg install -y curl
   install_script:
-    - pkg install -y git roswell gmake
+    - curl -L https://raw.githubusercontent.com/shamazmazum/cl-cirrus/master/install.sh | sh
   script:
-    - ros -l $CIRRUS_WORKING_DIR/tests/cirrus.lisp
+    - cl -f $CIRRUS_WORKING_DIR/tests/cirrus.lisp
