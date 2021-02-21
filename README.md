@@ -1,5 +1,6 @@
 freebsd-sysctl
 =============
+[![Build Status](https://api.cirrus-ci.com/github/shamazmazum/freebsd-sysctl.svg)](https://cirrus-ci.com/github/shamazmazum/freebsd-sysctl)
 
 `freebsd-sysctl` is a wrapper around `sysctl` system call for FreeBSD. It can be
 used, for example, in system monitors in StumpWM's mode line for tracking CPU
