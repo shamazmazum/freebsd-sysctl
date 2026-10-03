@@ -1,4 +1,4 @@
-(in-package :freebsd-sysctl-tests)
+(in-package :freebsd-sysctl/tests)
 
 (defun run-tests ()
   (explain! (run 'freebsd-sysctl)))

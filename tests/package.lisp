@@ -1,3 +1,3 @@
-(defpackage freebsd-sysctl-tests
+(defpackage freebsd-sysctl/tests
   (:use #:cl #:freebsd-sysctl #:fiveam)
   (:export #:run-tests))
