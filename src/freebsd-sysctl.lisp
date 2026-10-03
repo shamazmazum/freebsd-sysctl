@@ -9,6 +9,9 @@
 (defcfun ("strerror" strerror) :string
   (errnum :int))
 
+(deftype pointer () t)
+(deftype foreign-data () '(or integer single-float string))
+
 (serapeum:-> get-errno () (values (signed-byte 32) &optional))
 (defun get-errno ()
   #+sbcl (sb-alien:get-errno)
@@ -28,84 +31,94 @@
 
 
 (defcfun ("sysctl" %sysctl) :int
-  (name :pointer :int)
+  (name    (:pointer :int))
   (namelen :uint)
-  (oldp :pointer)
-  (oldlenp :pointer size-t)
-  (newp :pointer)
-  (newlen size-t))
+  (oldp    :pointer)
+  (oldlenp (:pointer :size))
+  (newp    :pointer)
+  (newlen  :size))
 
 (defcfun ("sysctlnametomib" %sysctl-name=>mib) :int
-  (name :string)
-  (mibp :pointer :int)
-  (sizep :pointer size-t))
+  (name  :string)
+  (mibp  (:pointer :int))
+  (sizep (:pointer :size)))
 
+(serapeum:-> fill-foreign-array (pointer (simple-array (signed-byte 32) (*))
+                                 &key (:offset (unsigned-byte 32)))
+             (values &optional))
 (defun fill-foreign-array (foreign array &key (offset 0))
-  (if (> (+ offset (length array)) +max-mib-len+)
-      (error 'sysctl-error :message "mib array is too long"))
+  (when (> (+ offset (length array)) +max-mib-len+)
+    (error 'sysctl-error :message "mib array is too long"))
   (loop for i below (length array) do
     (setf (mem-aref foreign :int (+ offset i))
-          (aref array i))))
+          (aref array i)))
+  (values))
 
+(serapeum:-> sysctl-name=>mib (string)
+             (values (simple-array (signed-byte 32) (*)) &optional))
 (defun sysctl-name=>mib (name)
-  (declare (type string name))
   "Get sysctl mib array corresponding to sysctl name."
-  (if (> (1+ (length name)) +max-foreign-len+)
-      (error 'sysctl-error :message "sysctl name is too long"))
-  (with-foreign-objects ((str :char +max-foreign-len+)
-                         (size 'size-t)
-                         (mib :int +max-mib-len+))
-    (lisp-string-to-foreign name str (1+ (length name)))
-    (setf (mem-aref size 'size-t) +max-mib-len+)
-    (let ((result (%sysctl-name=>mib str mib size)))
-      (when (not (zerop result))
+  (when (> (1+ (length name)) +max-foreign-len+)
+    (error 'sysctl-error :message "sysctl name is too long"))
+  (with-foreign-objects ((size :size)
+                         (mib  :int +max-mib-len+))
+    (setf (mem-aref size :size) +max-mib-len+)
+    (let ((result (%sysctl-name=>mib name mib size)))
+      (unless (zerop result)
         (error 'sysctl-error :errno (get-errno))))
-    (let ((new-size (mem-aref size 'size-t)))
-      (if (= +max-mib-len+ new-size)
-          (error "mib array is too long"))
-      (make-array
-       new-size
-       :initial-contents (loop for i below new-size
-                               collect (mem-aref mib :int i))))))
+    (let ((new-size (mem-aref size :size)))
+      (when (= +max-mib-len+ new-size)
+        (error "mib array is too long"))
+      (let ((result (make-array new-size :element-type '(signed-byte 32))))
+        (loop for i below new-size do
+          (setf (aref result i)
+                (mem-aref mib :int i)))
+        result))))
 
+(serapeum:-> sysctl-type ((simple-array (signed-byte 32) (*)))
+             (values string &optional))
 (defun sysctl-type (mib)
-  (declare (type simple-vector mib))
-  (with-foreign-objects ((foreign-mib :int +max-mib-len+)
-                         (type :char +max-foreign-len+)
-                         (len 'size-t))
+  (with-foreign-objects ((foreign-mib :int  +max-mib-len+)
+                         (type        :char +max-foreign-len+)
+                         (len         :size))
     (fill-foreign-array foreign-mib mib :offset 2)
     (setf (mem-aref foreign-mib :int 0) +ctl-sysctl+
           (mem-aref foreign-mib :int 1) +ctl-sysctl-oidfmt+
-          (mem-aref len 'size-t) +max-foreign-len+)
+          (mem-aref len :size) +max-foreign-len+)
     (let ((result (%sysctl foreign-mib
                            (+ 2 (length mib))
                            type len
                            (null-pointer) 0)))
-      (when (not (zerop result))
+      (unless (zerop result)
         (error 'sysctl-error :errno (get-errno))))
     (foreign-string-to-lisp type :offset 4)))
 
+(serapeum:-> sysctl-mib=>name ((simple-array (signed-byte 32) (*)))
+             (values string &optional))
 (defun sysctl-mib=>name (mib)
   "Get sysctl name corresponding to mib array"
-  (declare (type simple-vector mib))
-  (with-foreign-objects ((foreign-mib :int +max-mib-len+)
-                         (name :char +max-foreign-len+)
-                         (len 'size-t))
+  (with-foreign-objects ((foreign-mib :int  +max-mib-len+)
+                         (name        :char +max-foreign-len+)
+                         (len         :size))
     (fill-foreign-array foreign-mib mib :offset 2)
     (setf (mem-aref foreign-mib :int 0) +ctl-sysctl+
           (mem-aref foreign-mib :int 1) +ctl-sysctl-name+
-          (mem-aref len 'size-t) +max-foreign-len+)
+          (mem-aref len :size) +max-foreign-len+)
     (let ((result (%sysctl foreign-mib
                            (+ 2 (length mib))
                            name len
                            (null-pointer) 0)))
-      (when (not (zerop result))
+      (unless (zerop result)
         (error 'sysctl-error :errno (get-errno))))
-    (foreign-string-to-lisp name :max-chars (mem-aref len 'size-t))))
+    (foreign-string-to-lisp name :max-chars (mem-aref len :size))))
 
+(serapeum:-> parse-temperature ((signed-byte 32) integer)
+             (values single-float &optional))
 (defun parse-temperature (temp precision)
   (- (/ temp (expt 10.0 precision)) 273.15))
 
+(serapeum:-> interpret-result (pointer (unsigned-byte 32) string)
+             (values foreign-data &optional))
 (defun interpret-result (data length type)
   (cond
     ((string= type "A")
@@ -130,6 +143,8 @@
                             1)))
     (t (error 'sysctl-error :message "Unknown data format"))))
 
+(serapeum:-> output-data (pointer string foreign-data)
+             (values (unsigned-byte 32) &optional))
 (defun output-data (foreign-data type data)
   (cond
     ((string= type "A")
@@ -150,67 +165,71 @@
      8)
     (t (error 'sysctl-error :message "Unknown data format"))))
 
+(serapeum:-> sysctl ((simple-array (signed-byte 32) (*)) &optional (or foreign-data null))
+             (values foreign-data (or foreign-data null) &optional))
 (defun sysctl (mib &optional new-value)
   "Perform sysctl call for a value specified by mib array. If new-value is
  specified, it will be set as a new value for that sysctl. Two values are
  returned: the old and the new value."
-  (declare (type simple-vector mib))
   (let ((type (sysctl-type mib)))
     (with-foreign-objects ((foreign-mib :int +max-mib-len+)
-                           (old-data :uint8 +max-foreign-len+)
-                           (new-data :uint8 +max-foreign-len+)
-                           (old-len 'size-t))
+                           (old-data    :uint8 +max-foreign-len+)
+                           (new-data    :uint8 +max-foreign-len+)
+                           (old-len     :size))
       (fill-foreign-array foreign-mib mib)
-      (setf (mem-aref old-len 'size-t) +max-foreign-len+)
-      (let ((new-len (if new-value (output-data new-data type new-value) 0))
+      (setf (mem-aref old-len :size) +max-foreign-len+)
+      (let ((new-len  (if new-value (output-data new-data type new-value) 0))
             (new-data (if new-value new-data (null-pointer))))
         (let ((result (%sysctl foreign-mib
                                (length mib)
                                old-data old-len
                                new-data new-len)))
-          (when (not (zerop result))
+          (unless (zerop result)
             (error 'sysctl-error :errno (get-errno)))))
       (values
-       (interpret-result old-data (mem-aref old-len 'size-t) type)
+       (interpret-result old-data (mem-aref old-len :size) type)
        new-value))))
 
+(serapeum:-> sysctl-by-name (string &optional (or foreign-data null))
+             (values foreign-data (or foreign-data null) &optional))
 (defun sysctl-by-name (name &optional new-value)
   "Same as SYSCTL, only it accepts string name for sysctl rather than mib array."
-  (declare (type string name))
   (sysctl (sysctl-name=>mib name) new-value))
 
+(serapeum:-> list-sysctls (string)
+             (values list &optional))
 (defun list-sysctls (name)
   "Returns a list of sysctls for the node with name NAME."
-  (declare (type string name))
   (let* ((mib (sysctl-name=>mib name))
          (original-length (length mib)))
     (if (string/= (sysctl-type mib) "N")
         (error 'sysctl-error :message "Please specify a node"))
-    (labels ((do-list-sysctls (mib list)
-               (with-foreign-objects ((foreign-mib :int +max-mib-len+)
-                                      (new-mib :int +max-mib-len+)
-                                      (len 'size-t))
-                 (fill-foreign-array foreign-mib mib :offset 2)
-                 (setf (mem-aref foreign-mib :int 0) +ctl-sysctl+
-                       (mem-aref foreign-mib :int 1) +ctl-sysctl-next+
-                       (mem-aref len 'size-t) +max-foreign-len+)
-                 (let ((result (%sysctl foreign-mib
-                                        (+ 2 (length mib))
-                                        new-mib len
-                                        (null-pointer) 0)))
-                   (if (and (not (zerop result))
-                            (/= (get-errno) +enoent+))
-                       (error 'sysctl-error :errno (get-errno))))
-                 (let ((new-mib
-                         (let ((new-len (/ (mem-aref len 'size-t)
+    (labels ((%go (mib list)
+               (let ((new-mib
+                       (with-foreign-objects ((foreign-mib :int +max-mib-len+)
+                                              (new-mib-ptr :int +max-mib-len+)
+                                              (len         :size))
+                         (fill-foreign-array foreign-mib mib :offset 2)
+                         (setf (mem-aref foreign-mib :int 0) +ctl-sysctl+
+                               (mem-aref foreign-mib :int 1) +ctl-sysctl-next+
+                               (mem-aref len :size) +max-foreign-len+)
+                         (let ((result (%sysctl foreign-mib
+                                                (+ 2 (length mib))
+                                                new-mib-ptr len
+                                                (null-pointer) 0)))
+                           (unless (or (zerop result)
+                                       (= (get-errno) +enoent+))
+                             (error 'sysctl-error :errno (get-errno))))
+                         (let ((new-len (/ (mem-aref len :size)
                                            (foreign-type-size :int))))
-                           (if (= +max-mib-len+ new-len)
-                               (error 'sysctl-error :message "mib is too long"))
-                           (make-array new-len :initial-contents
-                                       (loop for i below new-len collect
-                                                                 (mem-aref new-mib :int i))))))
-                   (if (equalp (subseq new-mib 0 original-length)
-                               (subseq mib 0 original-length))
-                       (do-list-sysctls new-mib (cons (sysctl-mib=>name new-mib) list))
-                       list)))))
-      (do-list-sysctls mib nil))))
+                           (when (= +max-mib-len+ new-len)
+                             (error 'sysctl-error :message "mib is too long"))
+                           (let ((mib (make-array new-len :element-type '(signed-byte 32))))
+                             (loop for i below new-len do
+                               (setf (aref mib i) (mem-aref new-mib-ptr :int i)))
+                             mib)))))
+                 (if (equalp (subseq new-mib 0 original-length)
+                             (subseq     mib 0 original-length))
+                     (%go new-mib (cons (sysctl-mib=>name new-mib) list))
+                     list))))
+      (%go mib nil))))
