@@ -9,8 +9,10 @@
 (defcfun ("strerror" strerror) :string
   (errnum :int))
 
+(serapeum:-> get-errno () (values (signed-byte 32) &optional))
 (defun get-errno ()
-  (mem-aref (foreign-symbol-pointer "errno") :int))
+  #+sbcl (sb-alien:get-errno)
+  #-sbcl 0)
 
 (define-condition sysctl-error (error)
   ((errno :initform 0
@@ -19,11 +21,13 @@
    (message :initarg :message
             :reader sysctl-error-message))
   (:report (lambda (c s)
-             (if (/= (sysctl-error-errno c) 0)
-                 (format s "sysctl system call error: ~a" (strerror (sysctl-error-errno c)))
-                 (write-line (sysctl-error-message c) s)))))
+             (if (zerop (sysctl-error-errno c))
+                 (write-line (sysctl-error-message c) s)
+                 (format s "sysctl system call error: ~a"
+                         (strerror (sysctl-error-errno c)))))))
 
-(defcfun ("sysctl" sysctl%) :int
+
+(defcfun ("sysctl" %sysctl) :int
   (name :pointer :int)
   (namelen :uint)
   (oldp :pointer)
@@ -31,15 +35,7 @@
   (newp :pointer)
   (newlen size-t))
 
-#+nil
-(defcfun ("sysctlbyname" sysctl-by-name%) :int
-  (name :string)
-  (oldp :pointer)
-  (oldlenp :pointer size-t)
-  (newp :pointer)
-  (newlen size-t))
-
-(defcfun ("sysctlnametomib" sysctl-name=>mib%) :int
+(defcfun ("sysctlnametomib" %sysctl-name=>mib) :int
   (name :string)
   (mibp :pointer :int)
   (sizep :pointer size-t))
@@ -61,7 +57,7 @@
                          (mib :int +max-mib-len+))
     (lisp-string-to-foreign name str (1+ (length name)))
     (setf (mem-aref size 'size-t) +max-mib-len+)
-    (let ((result (sysctl-name=>mib% str mib size)))
+    (let ((result (%sysctl-name=>mib str mib size)))
       (when (not (zerop result))
         (error 'sysctl-error :errno (get-errno))))
     (let ((new-size (mem-aref size 'size-t)))
@@ -81,7 +77,7 @@
     (setf (mem-aref foreign-mib :int 0) +ctl-sysctl+
           (mem-aref foreign-mib :int 1) +ctl-sysctl-oidfmt+
           (mem-aref len 'size-t) +max-foreign-len+)
-    (let ((result (sysctl% foreign-mib
+    (let ((result (%sysctl foreign-mib
                            (+ 2 (length mib))
                            type len
                            (null-pointer) 0)))
@@ -99,7 +95,7 @@
     (setf (mem-aref foreign-mib :int 0) +ctl-sysctl+
           (mem-aref foreign-mib :int 1) +ctl-sysctl-name+
           (mem-aref len 'size-t) +max-foreign-len+)
-    (let ((result (sysctl% foreign-mib
+    (let ((result (%sysctl foreign-mib
                            (+ 2 (length mib))
                            name len
                            (null-pointer) 0)))
@@ -168,7 +164,7 @@
       (setf (mem-aref old-len 'size-t) +max-foreign-len+)
       (let ((new-len (if new-value (output-data new-data type new-value) 0))
             (new-data (if new-value new-data (null-pointer))))
-        (let ((result (sysctl% foreign-mib
+        (let ((result (%sysctl foreign-mib
                                (length mib)
                                old-data old-len
                                new-data new-len)))
@@ -198,7 +194,7 @@
                  (setf (mem-aref foreign-mib :int 0) +ctl-sysctl+
                        (mem-aref foreign-mib :int 1) +ctl-sysctl-next+
                        (mem-aref len 'size-t) +max-foreign-len+)
-                 (let ((result (sysctl% foreign-mib
+                 (let ((result (%sysctl foreign-mib
                                         (+ 2 (length mib))
                                         new-mib len
                                         (null-pointer) 0)))

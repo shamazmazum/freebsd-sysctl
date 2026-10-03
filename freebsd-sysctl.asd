@@ -4,7 +4,7 @@
   :licence "2-clause BSD"
   :version "1.0"
   :defsystem-depends-on (:cffi-grovel)
-  :depends-on (:cffi)
+  :depends-on (:cffi :serapeum)
   :pathname "src"
   :serial t
   :components ((:file "package")
