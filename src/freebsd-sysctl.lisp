@@ -12,6 +12,40 @@
 (deftype pointer () t)
 (deftype foreign-data () '(or integer single-float string))
 
+(serapeum:defconstructor unsigned-integer
+  (size (member 4 8)))
+
+(serapeum:defconstructor signed-integer
+  (size (member 4 8)))
+
+(serapeum:defconstructor temperature
+  (precision (integer 1)))
+
+(deftype foreign-type ()
+  "Type of sysctl node"
+  '(or unsigned-integer signed-integer temperature (member :string :node :unknown)))
+
+(serapeum:-> parse-sysctl-type (string)
+             (values foreign-type &optional))
+(defun parse-sysctl-type (string)
+  (cond
+    ((string= string "A") :string)
+    ((string= string "I")
+     (signed-integer 4))
+    ((string= string "IU")
+     (unsigned-integer 4))
+    ((string= string "L")
+     (signed-integer 8))
+    ((string= string "LU")
+     (unsigned-integer 8))
+    ((string= string "N") :node)
+    ((string= (subseq string 0 2) "IK")
+     (temperature
+      (if (> (length string) 2)
+          (parse-integer string :start 2)
+          1)))
+    (t :unknown)))
+
 (serapeum:-> get-errno () (values (signed-byte 32) &optional))
 (defun get-errno ()
   #+sbcl (sb-alien:get-errno)
@@ -76,8 +110,9 @@
         result))))
 
 (serapeum:-> sysctl-type ((simple-array (signed-byte 32) (*)))
-             (values string &optional))
+             (values foreign-type &optional))
 (defun sysctl-type (mib)
+  "Return the type of sysctl node."
   (with-foreign-objects ((foreign-mib :int  +max-mib-len+)
                          (type        :char +max-foreign-len+)
                          (len         :size))
@@ -91,7 +126,8 @@
                            (null-pointer) 0)))
       (unless (zerop result)
         (error 'sysctl-error :errno (get-errno))))
-    (foreign-string-to-lisp type :offset 4)))
+    (parse-sysctl-type
+     (foreign-string-to-lisp type :offset 4))))
 
 (serapeum:-> sysctl-mib=>name ((simple-array (signed-byte 32) (*)))
              (values string &optional))
@@ -117,53 +153,58 @@
 (defun parse-temperature (temp precision)
   (- (/ temp (expt 10.0 precision)) 273.15))
 
-(serapeum:-> interpret-result (pointer (unsigned-byte 32) string)
+(serapeum:-> interpret-result (pointer (unsigned-byte 32) foreign-type)
              (values foreign-data &optional))
 (defun interpret-result (data length type)
-  (cond
-    ((string= type "A")
+  (declare (optimize (speed 3)))
+  (typecase type
+    ((eql :string)
      (foreign-string-to-lisp data :max-chars length))
-    ((string= type "I")
-     (if (/= length 4) (error 'sysctl-error :message "Wrong data length"))
-     (mem-ref data :int))
-    ((string= type "IU")
-     (if (/= length 4) (error 'sysctl-error :message "Wrong data length"))
-     (mem-ref data :uint))
-    ((string= type "L")
-     (if (/= length 8) (error 'sysctl-error :message "Wrong data length"))
-     (mem-ref data :long))
-    ((string= type "LU")
-     (if (/= length 8) (error 'sysctl-error :message "Wrong data length"))
-     (mem-ref data :ulong))
-    ((string= (subseq type 0 2) "IK")
-     (if (/= length 4) (error 'sysctl-error :message "Wrong data length"))
-     (parse-temperature (mem-ref data :int)
-                        (if (> (length type) 2)
-                            (parse-integer type :start 2)
-                            1)))
-    (t (error 'sysctl-error :message "Unknown data format"))))
+    (signed-integer
+     (unless (= length (signed-integer-size type))
+       (error 'sysctl-error :message "Wrong data length"))
+     (case (signed-integer-size type)
+       (4 (mem-ref data :int))
+       (8 (mem-ref data :long))))
+    (unsigned-integer
+     (unless (= length (unsigned-integer-size type))
+       (error 'sysctl-error :message "Wrong data length"))
+     (case (unsigned-integer-size type)
+       (4 (mem-ref data :uint))
+       (8 (mem-ref data :ulong))))
+    (temperature
+     (unless (= length 4)
+       (error 'sysctl-error :message "Wrong data length"))
+     (parse-temperature (mem-ref data :int) (temperature-precision type)))
+    ((eql :node)
+     (error 'sysctl-error :message "This node is not a leaf"))
+    ((eql :unknown)
+     (error 'sysctl-error :message "Unknown data format"))))
 
-(serapeum:-> output-data (pointer string foreign-data)
+(serapeum:-> output-data (pointer foreign-type foreign-data)
              (values (unsigned-byte 32) &optional))
 (defun output-data (foreign-data type data)
-  (cond
-    ((string= type "A")
-     (lisp-string-to-foreign (the string data)
-                             foreign-data +max-foreign-len+)
+  (declare (optimize (speed 3)))
+  (typecase type
+    ((eql :string)
+     (lisp-string-to-foreign data foreign-data +max-foreign-len+)
      (1+ (length data)))
-    ((string= type "I")
-     (setf (mem-aref foreign-data :int) (the integer data))
-     4)
-    ((string= type "IU")
-     (setf (mem-aref foreign-data :uint) (the (integer 0) data))
-     4)
-    ((string= type "L")
-     (setf (mem-aref foreign-data :long) (the integer data))
-     8)
-    ((string= type "LU")
-     (setf (mem-aref foreign-data :ulong) (the (integer 0) data))
-     8)
-    (t (error 'sysctl-error :message "Unknown data format"))))
+    (signed-integer
+     (case (signed-integer-size type)
+       (4 (setf (mem-ref foreign-data :int)  data))
+       (8 (setf (mem-ref foreign-data :long) data)))
+     (signed-integer-size type))
+    (unsigned-integer
+     (case (unsigned-integer-size type)
+       (4 (setf (mem-ref foreign-data :uint)  data))
+       (8 (setf (mem-ref foreign-data :ulong) data)))
+     (unsigned-integer-size type))
+    (temperature
+     (error 'sysctl-error :message "Cannot set temperature"))
+    ((eql :node)
+     (error 'sysctl-error :message "This node is not a leaf"))
+    ((eql :unknown)
+     (error 'sysctl-error :message "Unknown data format"))))
 
 (serapeum:-> sysctl ((simple-array (signed-byte 32) (*)) &optional (or foreign-data null))
              (values foreign-data (or foreign-data null) &optional))
@@ -202,8 +243,8 @@
   "Returns a list of sysctls for the node with name NAME."
   (let* ((mib (sysctl-name=>mib name))
          (original-length (length mib)))
-    (if (string/= (sysctl-type mib) "N")
-        (error 'sysctl-error :message "Please specify a node"))
+    (unless (eq (sysctl-type mib) :node)
+      (error 'sysctl-error :message "Please specify a node"))
     (labels ((%go (mib list)
                (let ((new-mib
                        (with-foreign-objects ((foreign-mib :int +max-mib-len+)
