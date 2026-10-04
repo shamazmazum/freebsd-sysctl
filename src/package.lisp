@@ -7,6 +7,7 @@
            #:signed-integer
            #:temperature
            #:foreign-type
+           #:foreign-data
 
            #:sysctl-name=>mib
            #:sysctl-mib=>name
