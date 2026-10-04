@@ -237,12 +237,13 @@
   "Same as SYSCTL, only it accepts string name for sysctl rather than mib array."
   (sysctl (sysctl-name=>mib name) new-value))
 
-(serapeum:-> list-sysctls (string)
+(serapeum:-> list-sysctls ((or string null))
              (values list &optional))
 (defun list-sysctls (name)
-  "Returns a list of sysctls for the node with name NAME."
-  (let* ((mib (sysctl-name=>mib name))
-         (original-length (length mib)))
+  "Returns a list of sysctls for the node with name NAME. NAME can be
+NIL to return all sysctls."
+  (let* ((mib (sysctl-name=>mib (or name "kern")))
+         (original-length (if name (length mib) 0)))
     (unless (eq (sysctl-type mib) :node)
       (error 'sysctl-error :message "Please specify a node"))
     (labels ((%go (mib list)
