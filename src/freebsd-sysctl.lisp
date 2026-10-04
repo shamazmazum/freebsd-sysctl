@@ -258,19 +258,22 @@
                                                 (+ 2 (length mib))
                                                 new-mib-ptr len
                                                 (null-pointer) 0)))
-                           (unless (or (zerop result)
-                                       (= (get-errno) +enoent+))
-                             (error 'sysctl-error :errno (get-errno))))
-                         (let ((new-len (/ (mem-aref len :size)
-                                           (foreign-type-size :int))))
-                           (when (= +max-mib-len+ new-len)
-                             (error 'sysctl-error :message "mib is too long"))
-                           (let ((mib (make-array new-len :element-type '(signed-byte 32))))
-                             (loop for i below new-len do
-                               (setf (aref mib i) (mem-aref new-mib-ptr :int i)))
-                             mib)))))
-                 (if (equalp (subseq new-mib 0 original-length)
-                             (subseq     mib 0 original-length))
+                           (cond
+                             ((zerop result)
+                              (let ((new-len (/ (mem-aref len :size)
+                                                (foreign-type-size :int))))
+                                (when (= +max-mib-len+ new-len)
+                                  (error 'sysctl-error :message "mib is too long"))
+                                (let ((mib (make-array new-len
+                                                       :element-type '(signed-byte 32))))
+                                  (loop for i below new-len do
+                                    (setf (aref mib i) (mem-aref new-mib-ptr :int i)))
+                                  mib)))
+                             ((= (get-errno) +enoent+) nil)
+                             (t (error 'sysctl-error :errno (get-errno))))))))
+                 (if (and new-mib
+                          (equalp (subseq new-mib 0 original-length)
+                                  (subseq     mib 0 original-length)))
                      (%go new-mib (cons (sysctl-mib=>name new-mib) list))
                      list))))
       (%go mib nil))))
