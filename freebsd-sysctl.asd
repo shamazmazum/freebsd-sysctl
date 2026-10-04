@@ -2,7 +2,7 @@
   :description "Sysctl kernel control mechanism for common lisp"
   :maintainer "Vasily Postnicov <shamaz.mazum@gmail.com>"
   :licence "2-clause BSD"
-  :version "1.0"
+  :version "1.1"
   :defsystem-depends-on (:cffi-grovel)
   :depends-on (:cffi :serapeum)
   :pathname "src"
@@ -17,7 +17,6 @@
 
 (defsystem :freebsd-sysctl/tests
   :name :freebsd-sysctl/tests
-  :version "0.1"
   :author "Vasily Postnicov <shamaz.mazum@gmail.com>"
   :license "2-clause BSD"
   :serial t
